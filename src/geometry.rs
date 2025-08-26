@@ -1,0 +1,216 @@
+use crate::{vertex::Vertex};
+use geo::{BooleanOps, BoundingRect, LineString, Point, Polygon, TriangulateEarcut};
+
+use std::{sync::Mutex, thread, vec};
+
+use geojson::{FeatureCollection, GeoJson};
+
+const EARTH_RADIUS: f64 = 6371000.0;
+const BLUE_COLOR: [f32; 4] = [0.0, 0.3, 1.0, 1.0];
+
+pub fn convert(lon: f64, lat: f64, radius: f64) -> [f32; 3] {
+    let phi = lat.to_radians();
+    let theta = lon.to_radians();
+
+    let x = -(radius * phi.sin() * theta.cos());
+    let y = radius * phi.cos();
+    let z = radius * phi.sin() * theta.sin();
+
+    [x as f32, y as f32, z as f32]
+}
+
+/// Generates a UV sphere mesh with radius 6371, 360 segments, and 180 rings.
+pub fn generate_sphere() -> (Vec<Vertex>, Vec<u32>) {
+    let mut vertices: Vec<Vertex> = vec![];
+    let mut indices: Vec<u32> = vec![];
+    let mut index = 0;
+
+    for x in 0..=360 {
+        for y in 0..=180 {
+            let point = Point::new(x as f64, y as f64);
+            let point2 = Point::new(x as f64 + 1.0, y as f64 + 1.0);
+
+            let rect = Polygon::new(
+                LineString::from(vec![
+                    (point.x(), point.y()),
+                    (point2.x(), point.y()),
+                    (point2.x(), point2.y()),
+                    (point.x(), point2.y()),
+                    (point.x(), point.y()),
+                ]),
+                vec![],
+            );
+            rect.earcut_triangles().iter().for_each(|i| {
+                vertices.push(Vertex {
+                    position: convert(i.0.x, i.0.y, EARTH_RADIUS),
+                    color: BLUE_COLOR,
+                });
+                indices.push(index);
+                index += 1;
+
+                vertices.push(Vertex {
+                    position: convert(i.1.x, i.1.y, EARTH_RADIUS),
+                    color: BLUE_COLOR,
+                });
+                indices.push(index);
+                index += 1;
+
+                vertices.push(Vertex {
+                    position: convert(i.2.x, i.2.y, EARTH_RADIUS),
+                    color: BLUE_COLOR,
+                });
+                indices.push(index);
+                index += 1;
+            });
+        }
+    }
+
+    (vertices, indices)
+}
+
+pub fn draw_polygon(polygon: &Vec<Vec<Vec<f64>>>, color: [f32; 4]) -> (Vec<Vertex>, Vec<u32>) {
+    let mut index = 0;
+
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+
+    let pg = Polygon::new(
+        polygon
+            .iter()
+            .take(1)
+            .flat_map(|ring| {
+                ring.iter()
+                    .map(|coord| Point::new(coord[0] + 180.0, 90.0 - coord[1]))
+                    .collect::<LineString<_>>()
+            })
+            .collect(),
+        polygon
+            .iter()
+            .skip(1)
+            .map(|ring| {
+                ring.iter()
+                    .map(|coord| Point::new(coord[0] + 180.0, 90.0 - coord[1]))
+                    .collect::<LineString<_>>()
+            })
+            .collect(),
+    );
+
+    match pg.bounding_rect() {
+        Some(rect) => {
+            let min = rect.min();
+            let max = rect.max();
+
+            let min_x = min.x.floor() as i32;
+            let min_y = min.y.floor() as i32;
+            let max_x = max.x.ceil() as i32;
+            let max_y = max.y.ceil() as i32;
+
+            for x in min_x..=max_x {
+                for y in min_y..=max_y {
+                    let point1 = Point::new(x as f64, y as f64);
+                    let point2 = Point::new((x + 1) as f64, y as f64);
+                    let point3 = Point::new(x as f64, (y + 1) as f64);
+                    let point4 = Point::new((x + 1) as f64, (y + 1) as f64);
+
+                    let rect = Polygon::new(
+                        LineString::from(vec![
+                            (point1.x(), point1.y()),
+                            (point2.x(), point2.y()),
+                            (point4.x(), point4.y()),
+                            (point3.x(), point3.y()),
+                            (point1.x(), point1.y()),
+                        ]),
+                        vec![],
+                    );
+
+                    pg.intersection(&rect).0.iter().for_each(|polygon| {
+                        polygon.earcut_triangles().iter().for_each(|i| {
+                            vertices.push(Vertex {
+                                position: convert(i.0.x, i.0.y, EARTH_RADIUS),
+                                color: color,
+                            });
+                            indices.push(index);
+                            index += 1;
+
+                            vertices.push(Vertex {
+                                position: convert(i.1.x, i.1.y, EARTH_RADIUS),
+                                color: color,
+                            });
+                            indices.push(index);
+                            index += 1;
+
+                            vertices.push(Vertex {
+                                position: convert(i.2.x, i.2.y, EARTH_RADIUS),
+                                color: color,
+                            });
+                            indices.push(index);
+                            index += 1;
+                        });
+                    });
+                }
+            }
+            (vertices, indices)
+        }
+        None => (vertices, indices),
+    }
+}
+
+pub async fn generate_mesh() -> (Vec<Vertex>, Vec<u32>) {
+    // let (mut vertices, mut indices) = generate_sphere();
+    // let mut index = vertices.len() as u32;
+
+    let geojson_string = std::fs::read_to_string("countries.geojson").unwrap();
+    let json: GeoJson = geojson_string.parse::<GeoJson>().unwrap();
+    let feature_collection: FeatureCollection = FeatureCollection::try_from(json).unwrap();
+
+    let (vs, is) = generate_sphere();
+
+    let vertices = std::sync::Arc::new(Mutex::new(vs));
+    let indices = std::sync::Arc::new(Mutex::new(is));
+
+
+    let random_color = [1.0, 1.0, 0.0, 1.0];
+
+    let mut handles = vec![];
+
+    for feature in feature_collection.features {
+        if let Some(geometry) = feature.geometry {
+            let vertices_clone = std::sync::Arc::clone(&vertices);
+            let indices_clone = std::sync::Arc::clone(&indices);
+            let handle = thread::spawn(move || match geometry.value {
+                geojson::Value::MultiPolygon(multi_polygon) => {
+                    multi_polygon.iter().for_each(|polygon| {
+                        let (vs, is) = draw_polygon(polygon, random_color);
+                        let index = vertices_clone.lock().unwrap().len() as u32;
+                        vertices_clone.lock().unwrap().extend(vs);
+                        indices_clone.lock().unwrap().extend(is.iter().map(|i| i + index));
+                    });
+                }
+
+                geojson::Value::Polygon(polygon) => {
+                    let (vs, is) = draw_polygon(&polygon, random_color);
+                    let index = vertices_clone.lock().unwrap().len() as u32;
+                    vertices_clone.lock().unwrap().extend(vs);
+                    indices_clone.lock().unwrap().extend(is.iter().map(|i| i + index));
+                }
+                geojson::Value::Point(_items) => todo!(),
+                geojson::Value::MultiPoint(_items) => todo!(),
+                geojson::Value::LineString(_items) => todo!(),
+                geojson::Value::MultiLineString(_items) => todo!(),
+                geojson::Value::GeometryCollection(_items) => todo!(),
+            });
+            handles.push(handle);
+        }
+    };
+
+    for handle in handles {
+        handle.join().unwrap();
+    }
+
+    let final_vertices = std::sync::Arc::try_unwrap(vertices).unwrap().into_inner().unwrap();
+    let final_indices = std::sync::Arc::try_unwrap(indices).unwrap().into_inner().unwrap();
+
+
+    (final_vertices, final_indices)
+    
+}
