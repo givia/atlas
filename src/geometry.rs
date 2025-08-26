@@ -1,7 +1,7 @@
 use crate::{vertex::Vertex};
 use geo::{BooleanOps, BoundingRect, LineString, Point, Polygon, TriangulateEarcut};
-
-use std::{sync::Mutex, thread, vec};
+use std::sync::mpsc::Sender;
+use std::{thread, vec};
 
 use geojson::{FeatureCollection, GeoJson};
 
@@ -155,62 +155,45 @@ pub fn draw_polygon(polygon: &Vec<Vec<Vec<f64>>>, color: [f32; 4]) -> (Vec<Verte
     }
 }
 
-pub async fn generate_mesh() -> (Vec<Vertex>, Vec<u32>) {
+pub fn generate_mesh(sender: Sender<(Vec<Vertex>, Vec<u32>)>) {
     // let (mut vertices, mut indices) = generate_sphere();
     // let mut index = vertices.len() as u32;
 
     let geojson_string = std::fs::read_to_string("countries.geojson").unwrap();
     let json: GeoJson = geojson_string.parse::<GeoJson>().unwrap();
     let feature_collection: FeatureCollection = FeatureCollection::try_from(json).unwrap();
-
-    let (vs, is) = generate_sphere();
-
-    let vertices = std::sync::Arc::new(Mutex::new(vs));
-    let indices = std::sync::Arc::new(Mutex::new(is));
-
-
+    
     let random_color = [1.0, 1.0, 0.0, 1.0];
-
-    let mut handles = vec![];
-
+    
+    
     for feature in feature_collection.features {
         if let Some(geometry) = feature.geometry {
-            let vertices_clone = std::sync::Arc::clone(&vertices);
-            let indices_clone = std::sync::Arc::clone(&indices);
-            let handle = thread::spawn(move || match geometry.value {
+            match geometry.value {
                 geojson::Value::MultiPolygon(multi_polygon) => {
                     multi_polygon.iter().for_each(|polygon| {
-                        let (vs, is) = draw_polygon(polygon, random_color);
-                        let index = vertices_clone.lock().unwrap().len() as u32;
-                        vertices_clone.lock().unwrap().extend(vs);
-                        indices_clone.lock().unwrap().extend(is.iter().map(|i| i + index));
+                        let polygon_clone = polygon.clone();
+                        let sender_clone = sender.clone();
+                        tokio::spawn(async move {
+                            let (vs, is) = draw_polygon(&polygon_clone, random_color);
+                            sender_clone.send((vs, is)).unwrap();
+                        });
                     });
                 }
 
                 geojson::Value::Polygon(polygon) => {
-                    let (vs, is) = draw_polygon(&polygon, random_color);
-                    let index = vertices_clone.lock().unwrap().len() as u32;
-                    vertices_clone.lock().unwrap().extend(vs);
-                    indices_clone.lock().unwrap().extend(is.iter().map(|i| i + index));
+                    let sender_clone = sender.clone();
+                    tokio::spawn(async move {
+                        let (vs, is) = draw_polygon(&polygon, random_color);
+                        sender_clone.send((vs, is)).unwrap();
+                    });
                 }
                 geojson::Value::Point(_items) => todo!(),
                 geojson::Value::MultiPoint(_items) => todo!(),
                 geojson::Value::LineString(_items) => todo!(),
                 geojson::Value::MultiLineString(_items) => todo!(),
                 geojson::Value::GeometryCollection(_items) => todo!(),
-            });
-            handles.push(handle);
+            };
         }
     };
 
-    for handle in handles {
-        handle.join().unwrap();
-    }
-
-    let final_vertices = std::sync::Arc::try_unwrap(vertices).unwrap().into_inner().unwrap();
-    let final_indices = std::sync::Arc::try_unwrap(indices).unwrap().into_inner().unwrap();
-
-
-    (final_vertices, final_indices)
-    
 }

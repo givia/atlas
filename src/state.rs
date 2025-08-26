@@ -1,9 +1,10 @@
 use crate::camera::{Camera, CameraController, CameraUniform};
 
-use crate::geometry::{generate_mesh};
+use crate::geometry::{generate_mesh, generate_sphere};
 use crate::vertex::Vertex;
+use std::sync::mpsc;
+use std::sync::mpsc::Receiver;
 use std::{iter, sync::Arc};
-use tokio::sync::Mutex;
 use wgpu::util::DeviceExt;
 use winit::{event_loop::ActiveEventLoop, keyboard::KeyCode, window::Window};
 
@@ -82,7 +83,7 @@ pub struct State {
     camera_bind_group: wgpu::BindGroup,
     pub window: Arc<Window>,
     depth_texture: Texture,
-    lock: Arc<Mutex<()>>,
+    receiver: Receiver<(Vec<Vertex>, Vec<u32>)>,
 }
 
 impl State {
@@ -155,7 +156,11 @@ impl State {
             screen_height: size.height,
         };
 
-        let (vertices, indices) = generate_mesh().await;
+        let (sender, receiver) = mpsc::channel();
+
+        generate_mesh(sender);
+
+        let (vertices, indices) = generate_sphere();
 
         let camera_controller = CameraController::new();
 
@@ -261,7 +266,7 @@ impl State {
 
         let depth_texture = Texture::create_depth_texture(&device, &config, "depth_texture");
 
-        Ok(Self {
+        let state = Self {
             surface,
             device,
             queue,
@@ -277,8 +282,10 @@ impl State {
             camera_uniform,
             window,
             depth_texture,
-            lock: Arc::new(Mutex::new(())),
-        })
+            receiver,
+        };
+
+        Ok(state)
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
@@ -305,6 +312,11 @@ impl State {
     }
 
     pub fn update(&mut self) {
+        if let Ok((vs, is)) = self.receiver.try_recv() {
+            let index_offset = self.vertices.len() as u32;
+            self.vertices.extend(vs);
+            self.indices.extend(is.iter().map(|i| i + index_offset));
+        }
         self.camera_uniform.update_view_proj(&self.camera);
         self.queue.write_buffer(
             &self.camera_buffer,
@@ -325,18 +337,21 @@ impl State {
             return Ok(());
         }
 
-        let vertex_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("vertex_buffer"),
-            contents: bytemuck::cast_slice(&self.vertices),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-        let index_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("index_buffer"),
-            contents: bytemuck::cast_slice(&self.indices),
-            usage: wgpu::BufferUsages::INDEX,
-        });
+        let vertex_buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("vertex_buffer"),
+                contents: bytemuck::cast_slice(&self.vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
+        let index_buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("index_buffer"),
+                contents: bytemuck::cast_slice(&self.indices),
+                usage: wgpu::BufferUsages::INDEX,
+            });
         let num_indices = self.indices.len() as u32;
-
 
         let output = self.surface.get_current_texture()?;
         let view = output
@@ -357,9 +372,9 @@ impl State {
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.1,
-                            g: 0.2,
-                            b: 0.3,
+                            r: 0.0,
+                            g: 0.0,
+                            b: 0.0,
                             a: 1.0,
                         }),
                         store: wgpu::StoreOp::Store,
@@ -391,14 +406,6 @@ impl State {
         Ok(())
     }
 
-    pub async fn add_to_buffer(&mut self, vertices: Vec<Vertex>, indices: Vec<u32>) {
-        {
-            let _lock = self.lock.lock().await;
-            let index = self.vertices.len() as u32;
-            self.vertices.extend(vertices);
-            self.indices.extend(indices.iter().map(|i| i + index));
-        }
-    }
     pub fn handle_mouse_press(&mut self, pressed: bool) {
         self.camera_controller.handle_mouse_press(pressed);
     }

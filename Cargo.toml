@@ -57,6 +57,7 @@ d3_geo_voronoi_rs = "0.10.7"
 geo-types = "0.7.17"
 geo = "0.30.0"
 rand = "0.9.2"
+mpsc = "0.2.6"
 
 [features]
 default = ["networking"]
