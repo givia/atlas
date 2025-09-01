@@ -1,7 +1,8 @@
 use crate::camera::{Camera, CameraController, CameraUniform};
 
-use crate::geometry::{generate_mesh, generate_sphere};
+use crate::geometry::{generate_mesh, generate_sphere, load_tile};
 use crate::vertex::Vertex;
+use std::thread;
 use std::sync::mpsc;
 use std::sync::mpsc::Receiver;
 use std::{iter, sync::Arc};
@@ -158,7 +159,12 @@ impl State {
 
         let (sender, receiver) = mpsc::channel();
 
-        generate_mesh(sender);
+        // generate_mesh(sender.clone());
+        
+        load_tile(sender.clone(), 1, 0, 0).await;
+        load_tile(sender.clone(), 1, 0, 1).await;
+        load_tile(sender.clone(), 1, 1, 0).await;
+        load_tile(sender.clone(), 1, 1, 1).await;
 
         let (vertices, indices) = generate_sphere();
 

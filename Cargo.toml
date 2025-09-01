@@ -10,31 +10,6 @@ crate-type = ["cdylib", "rlib"]
 name = "atlas"
 path = "src/main.rs"
 
-[[example]]
-name = "tile_loader_demo"
-path = "examples/tile_loader_demo.rs"
-
-[[example]]
-name = "test_cache_populate"
-path = "examples/test_cache_populate.rs"
-
-[[example]]
-name = "test_zoom4_cache"
-path = "examples/test_zoom4_cache.rs"
-
-[[example]]
-name = "cache_checker"
-path = "examples/cache_checker.rs"
-
-[[example]]
-name = "create_test_cache"
-path = "examples/create_test_cache.rs"
-
-[[example]]
-name = "test_complete_cache"
-path = "examples/test_complete_cache.rs"
-
-
 [dependencies]
 anyhow = "1.0"
 winit = { version = "0.30", features = ["android-native-activity"] }
@@ -44,10 +19,11 @@ wgpu = "25.0"
 pollster = "0.3"
 bytemuck = { version = "1.16", features = [ "derive" ] }
 cgmath = "0.18"
+protobuf = "3"
 
 # Optional networking dependencies (not available in WASM)
 tokio = { version = "1.0", features = ["full"], optional = true }
-reqwest = { version = "0.12", features = ["json"], optional = true }
+reqwest = { version = "0.12", features = ["json", "blocking", "gzip"], optional = true }
 image = { version = "0.25", features = ["png", "jpeg"] }
 geojson = "0.24.2"
 earcutr = "0.5.0"
@@ -58,6 +34,8 @@ geo-types = "0.7.17"
 geo = "0.30.0"
 rand = "0.9.2"
 mpsc = "0.2.6"
+mvt-reader = "2.1.0"
+
 
 [features]
 default = ["networking"]
@@ -78,3 +56,7 @@ web-sys = { version = "0.3", features = [
 [dev-dependencies]
 tempfile = "3.0"
 tokio-test = "0.4"
+
+[build-dependencies]
+protobuf-codegen = "3"
+protoc-rust = "^2.0"
